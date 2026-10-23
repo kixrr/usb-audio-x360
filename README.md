@@ -1,3 +1,32 @@
+# Fix for 5.1 Sound on Stereo Headsets
+Fixes missing or quiet voices for example in cutscenes in games with 5.1 sound like Final Fantasy XIII or Red Dead Redemption.  
+In these games the voices are in the center channel C.
+The reason why you can't hear the voices in usb-audio-x360 v0.1.4 is because it only uses the front-left and front-right channels and drops the other ones.
+The fix mixes all the channels of the 5.1 down to stereo so you can hear the voices from the center channel again.  
+Made with AI (MiMo-V2.6-Flash) and tested on a real Xbox 360.
+
+## Changes in this fork
+
+- **Always-on 5.1 → stereo downmix:** Center and surround channels are
+  folded into L/R at 0.707 (LFE dropped), so center-channel dialogue —
+  e.g. Final Fantasy XIII — is audible on stereo USB headsets. Stereo-only
+  content passes through unchanged.
+- **Channel order verified on hardware:** The render-mix order
+  (L, R, C, LFE, Ls, Rs) was confirmed on a real console with the bundled
+  5.1 test files `tools/channel_test.m4a` / `tools/channel_test.mp4`
+  (one channel per 8 s window, played from USB stick).
+- **Render-peak diagnostics in debug builds:** `tools/usb_audio_debug.py
+  status` / `watch` reports per-channel peaks once per second over the
+  XBDM debug API — see [Debug API](docs/debug-api.md).
+- **Native Windows build:** `tools\build_plugin.ps1` builds against an
+  installed XDK — no Wine, Xvfb, 7-Zip, or XexTool required
+  (see [BUILDING.md](BUILDING.md)).
+- **Pre-built release:** [`v0.1.5-stereo-downmix`](https://github.com/kixrr/usb-audio-x360/releases/tag/v0.1.5-stereo-downmix)
+  with SHA-256 checksum.
+- Based on [TimeoutTim/usb-audio-x360](https://github.com/TimeoutTim/usb-audio-x360)
+  (v0.1.4).
+
+
 # USB Audio 360
 
 USB Audio 360 adds USB headphone audio and microphone input to a modified
