@@ -26,6 +26,8 @@ Made with AI (MiMo-V2.6-Flash) and tested on a real Xbox 360.
 - Based on [TimeoutTim/usb-audio-x360](https://github.com/TimeoutTim/usb-audio-x360)
   (v0.1.4).
 
+  *********************************************************************************************************************************************
+
 
 # USB Audio 360
 
