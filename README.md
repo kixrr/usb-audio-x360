@@ -1,4 +1,4 @@
-# Fix for 5.1 Sound on Stereo Headsets
+# Fix for 5.1 Surround on Stereo Headsets
 Fixes missing or quiet voices for example in cutscenes in games with 5.1 sound like Final Fantasy XIII or Red Dead Redemption.  
 In these games the voices are in the center channel C.
 The reason why you can't hear the voices in usb-audio-x360 v0.1.4 is because it only uses the front-left and front-right channels and drops the other ones.
