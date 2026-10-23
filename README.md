@@ -1,3 +1,7 @@
+ <p align="center">
+  ─── ❖ ─── ❖ ─── ❖ ─── ❖ ─── ❖ ─── ❖ ─── ❖ ─── ❖ ─── ❖ ─── ❖ ─── 
+</p>
+
 # Fix for 5.1 Sound on Stereo Headsets:
 This fork fixes missing or quiet voices for example in cutscenes in games with 5.1 sound like Final Fantasy XIII or Red Dead Redemption.  
 In these games the voices are in the center channel C.
