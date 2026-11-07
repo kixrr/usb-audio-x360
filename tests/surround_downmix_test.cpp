@@ -55,6 +55,24 @@ int main() {
   assert(Near(left, 0.3f + 0.4f * kCenterGain));
   assert(Near(right, 0.4f * kCenterGain));
 
+  // Mono averages the stereo pair, so it can never exceed the larger input.
+  FoldMono(0.25f, -0.5f, &left);
+  assert(Near(left, -0.125f));
+  FoldMono(1.0f, 1.0f, &left);
+  assert(Near(left, 1.0f));
+  FoldMono(-1.0f, 1.0f, &left);
+  assert(Near(left, 0.0f));
+  FoldMono(0.5f, 0.25f, &left);
+  assert(Near(left, 0.375f));
+
+  // Folding the 5.1 mix to mono preserves the center-dialogue level.
+  for (int i = 0; i < kRenderChannels * kRenderStride; ++i) samples[i] = 0.0f;
+  samples[2 * kRenderStride + 0] = 1.0f;  // C
+  FoldFrame(samples, 0, &left, &right);
+  float mono;
+  FoldMono(left, right, &mono);
+  assert(Near(mono, kCenterGain));
+
   // ChannelPeak16: zero, half scale, negative half scale, full scale.
   float plane[kRenderStride];
   for (int i = 0; i < kRenderStride; ++i) plane[i] = 0.0f;

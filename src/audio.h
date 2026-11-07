@@ -63,6 +63,8 @@ BOOL AudioSetVolume(LONG percent);
 LONG AudioGetVolume();
 VOID AudioSetOutputMuted(BOOL muted);
 BOOL AudioIsOutputMuted();
+VOID AudioSetOutputMono(BOOL mono);
+BOOL AudioIsOutputMono();
 VOID AudioSetMicrophoneMuted(BOOL muted);
 BOOL AudioIsMicrophoneMuted();
 BOOL AudioSetMicrophoneGain(LONG percent);

@@ -80,6 +80,7 @@ bool Parse(const char* data, size_t size, Table* table) {
     else if (!strcmp(p, "microphone_gain")) field = MicGain;
     else if (!strcmp(p, "output_muted")) field = OutputMute;
     else if (!strcmp(p, "microphone_muted")) field = MicMute;
+    else if (!strcmp(p, "output_mono")) field = OutputMono;
     else continue;
     unsigned v = 0;
     if (!*value) return false;
@@ -106,9 +107,10 @@ bool Format(const Table& table, char* data, size_t capacity, size_t* size) {
       name[j] = (unsigned char)e.name[j] < 32 || e.name[j] == 127 ? ' ' : e.name[j];
     name[j] = 0;
     char line[384];
-    int n = sprintf(line, "\r\n; %s\r\n[%04x:%04x]\r\nvolume=%u\r\nmicrophone_gain=%u\r\noutput_muted=%u\r\nmicrophone_muted=%u\r\n",
+    int n = sprintf(line, "\r\n; %s\r\n[%04x:%04x]\r\nvolume=%u\r\nmicrophone_gain=%u\r\noutput_muted=%u\r\nmicrophone_muted=%u\r\noutput_mono=%u\r\n",
         *name ? name : "USB Audio Device", e.key >> 16, e.key & 65535,
-        Get(e.levels, Volume), Get(e.levels, MicGain), Get(e.levels, OutputMute), Get(e.levels, MicMute));
+        Get(e.levels, Volume), Get(e.levels, MicGain), Get(e.levels, OutputMute), Get(e.levels, MicMute),
+        Get(e.levels, OutputMono));
     if (n < 0 || used + (size_t)n >= capacity) return false;
     memcpy(data + used, line, n); used += n;
   }

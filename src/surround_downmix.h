@@ -33,6 +33,13 @@ inline void FoldFrame(const float* samples, unsigned frame, float* left,
   *right = r + c + rs;
 }
 
+// Fold an already downmixed stereo frame to mono. Averaging instead of
+// summing keeps the result inside the original peak envelope, so enabling
+// mono cannot introduce clipping that the stereo fold did not already have.
+inline void FoldMono(float left, float right, float* mono) {
+  *mono = 0.5f * (left + right);
+}
+
 // Measure the peak absolute magnitude of one planar channel, expressed as
 // an unsigned 16-bit scale factor where 65535 corresponds to full scale
 // (|sample| >= 1.0). Used by the debug API's render-peak diagnostics so a

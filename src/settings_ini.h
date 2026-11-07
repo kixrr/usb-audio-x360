@@ -4,7 +4,7 @@
 namespace audio_settings {
 const unsigned kCapacity = 64;
 const unsigned kDefault = 100u | (100u << 8);
-enum Field { Volume = 0, MicGain = 8, OutputMute = 16, MicMute = 17 };
+enum Field { Volume = 0, MicGain = 8, OutputMute = 16, MicMute = 17, OutputMono = 18 };
 struct Entry { unsigned key, levels; char name[128]; };
 struct Table { unsigned count; Entry entries[kCapacity]; };
 unsigned Mask(Field field);

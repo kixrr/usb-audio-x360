@@ -209,7 +209,7 @@ struct SettingsScene {
   HXUIOBJ gain_value;
   HXUIOBJ device_info;
   HXUIOBJ test_button, test_status;
-  HXUIOBJ volume_slider, volume_label, output_mute, mic_mute;
+  HXUIOBJ volume_slider, volume_label, output_mute, output_mono, mic_mute;
   HXUIOBJ meter, meter_label;
   HXUIOBJ properties_button;
   bool properties;
@@ -364,13 +364,15 @@ void RefreshSettings(SettingsScene* state) {
     g_xui.set_slider(state->volume_slider, volume);
   }
   SetCheck(state->output_mute, AudioIsOutputMuted());
+  SetCheck(state->output_mono, AudioIsOutputMono());
   SetCheck(state->mic_mute, AudioIsMicrophoneMuted());
   SetBool(state->mic_mute, L"Enabled", microphone);
   const HXUIOBJ recording[] = {state->gain_slider, state->gain_value, state->mic_mute,
       state->meter, state->meter_label, state->test_button, Find(state->object, L"MicPeakBackground")};
   for (unsigned i = 0; i < _countof(recording); ++i) SetBool(recording[i], L"Show", microphone);
-  SetString(state->output_mute, L"NavDown", microphone ? L"MicrophoneGainSlider" : L"DevicePropertiesButton");
-  SetString(state->properties_button, L"NavUp", microphone ? L"MicrophoneTestButton" : L"SettingsOutputMute");
+  SetString(state->output_mute, L"NavDown", L"SettingsOutputMono");
+  SetString(state->output_mono, L"NavDown", microphone ? L"MicrophoneGainSlider" : L"DevicePropertiesButton");
+  SetString(state->properties_button, L"NavUp", microphone ? L"MicrophoneTestButton" : L"SettingsOutputMono");
   LONG gain = AudioGetMicrophoneGain();
   if (gain != state->gain) {
     state->gain = gain;
@@ -459,12 +461,14 @@ HRESULT APIENTRY SettingsObjectProc(HXUIOBJ object, XUIMessage* message,
     state->volume_slider = Find(object, L"SettingsVolumeSlider");
     state->volume_label = Find(object, L"SettingsVolumeLabel");
     state->output_mute = Find(object, L"SettingsOutputMute");
+    state->output_mono = Find(object, L"SettingsOutputMono");
     state->mic_mute = Find(object, L"SettingsMicMute");
     state->meter = Find(object, L"MicPeakFill");
     state->meter_label = Find(object, L"MicPeakLabel");
     if (!state->back_button || !state->gain_slider || !state->gain_value ||
         !state->device_info || !state->test_button || !state->test_status ||
         !state->volume_slider || !state->volume_label || !state->output_mute ||
+        !state->output_mono ||
         !state->mic_mute || !state->meter || !state->meter_label || !state->properties_button) return E_FAIL;
     state->gain = state->volume = -1;
     state->meter_db = -60;
@@ -523,9 +527,12 @@ HRESULT APIENTRY SettingsObjectProc(HXUIOBJ object, XUIMessage* message,
       RefreshSettings(state);
       message->bHandled = TRUE;
     } else if (notify->dwNotify == XN_PRESS &&
-        (notify->hObjSource == state->output_mute || notify->hObjSource == state->mic_mute)) {
+        (notify->hObjSource == state->output_mute ||
+         notify->hObjSource == state->mic_mute ||
+         notify->hObjSource == state->output_mono)) {
       if (notify->hObjSource == state->output_mute) AudioSetOutputMuted(!AudioIsOutputMuted());
-      else AudioSetMicrophoneMuted(!AudioIsMicrophoneMuted());
+      else if (notify->hObjSource == state->mic_mute) AudioSetMicrophoneMuted(!AudioIsMicrophoneMuted());
+      else AudioSetOutputMono(!AudioIsOutputMono());
       RefreshSettings(state);
       message->bHandled = TRUE;
     } else if (notify->dwNotify == XN_PRESS && notify->hObjSource == state->properties_button) {
@@ -703,7 +710,8 @@ HXUIOBJ CreateSettingsPanel(bool properties = false) {
     {XUI_CLASS_TEXT, L"DeviceInformationValue", 154, 76, 540, 22, L"USB Audio Device", 0, 11},
     {XUI_CLASS_BUTTON, L"SettingsBackButton", 0, 0, 0, 0, 0, 0, 0},
     {XUI_CLASS_FIGURE, L"SettingsDivider", 424, 110, 1, 279, 0, 0, 0},
-    {XUI_CLASS_BUTTON, L"DevicePropertiesButton", 144, 352, 260, 28, L"Device properties", L"XuiButtonGuide", 12}
+    {XUI_CLASS_BUTTON, L"DevicePropertiesButton", 144, 352, 260, 28, L"Device properties", L"XuiButtonGuide", 12},
+    {XUI_CLASS_CHECKBOX, L"SettingsOutputMono", 144, 244, 260, 28, L"Mono output", L"XuiCheckbox", 12}
   };
   const Element details[] = {
     {XUI_CLASS_LABEL, L"PropertiesTitle", 156, 36, 400, 25, L"Device Properties", L"Label_Head", 0},
@@ -714,7 +722,7 @@ HXUIOBJ CreateSettingsPanel(bool properties = false) {
   const Element* elements = properties ? details : controls;
   const unsigned count = properties ? _countof(details) : _countof(controls);
   HXUIOBJ scene = 0, children[_countof(controls)] = {0};
-  const unsigned focus[] = {2, 3, 5, 6, 11, 17};
+  const unsigned focus[] = {2, 3, 18, 5, 6, 11, 17};
   unsigned owned = 0;
   if (g_xui.create(L"UsbAudioSettingsScene", &scene) < 0 || !scene) goto fail;
   if (!ConfigureElement(scene, L"UsbAudioSettings", 852, 480, 0, 0) ||

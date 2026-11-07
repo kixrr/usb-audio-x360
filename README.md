@@ -18,6 +18,10 @@ USB Audio 360.**
   folded into L/R at 0.707 (LFE dropped), so center-channel dialogue —
   e.g. Final Fantasy XIII — is audible on stereo USB headsets. Stereo-only
   content passes through unchanged.
+- **Mono output:** A checkbox in the Guide settings page folds the stereo
+  output to mono and plays it in both ears — useful for single-sided hearing
+  or mono headsets. The fold averages the stereo pair, so it cannot clip
+  more than the stereo signal already does.
 - **Channel order verified on hardware:** The render-mix order
   (L, R, C, LFE, Ls, Rs) was confirmed on a real console with the bundled
   5.1 test files `tools/channel_test.m4a` / `tools/channel_test.mp4`
@@ -68,8 +72,8 @@ The three icons control **volume**, **microphone mute**, and **settings**.
 
 ### Playback and recording
 
-The settings icon opens a native Guide page for output volume and mute,
-microphone level and mute, and microphone monitoring.
+The settings icon opens a native Guide page for output volume, mute and
+mono, microphone level and mute, and microphone monitoring.
 
 ![Playback and Recording settings with volume sliders, mute controls, and a live microphone level meter](docs/img/usb-audio-settings.jpg)
 
@@ -113,11 +117,12 @@ volume=65
 microphone_gain=100
 output_muted=0
 microphone_muted=0
+output_mono=0
 ```
 
-Volume accepts 0–100, microphone gain 0–200, and mute values 0 or 1. Edit the
-file while the console is off. Previously unseen devices use 100% playback
-volume and microphone gain, with both mute settings off.
+Volume accepts 0–100, microphone gain 0–200, and mute/mono values 0 or 1.
+Edit the file while the console is off. Previously unseen devices use 100%
+playback volume and microphone gain, with both mute settings and mono off.
 
 Saving happens in the background after two seconds without changes, at most
 once every ten seconds. Failed writes retry after thirty seconds. Leave a

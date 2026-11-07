@@ -9,19 +9,24 @@ static char output[32769];
 static bool ParseText(const char* p) { return Parse(p, strlen(p), &table); }
 int main() {
   assert(Get(kDefault, Volume) == 100 && Get(kDefault, MicGain) == 100);
+  assert(Get(kDefault, OutputMono) == 0);
   unsigned v = Set(kDefault, Volume, 23);
   v = Set(v, MicGain, 150); v = Set(v, OutputMute, 1);
+  v = Set(v, OutputMono, 1);
   assert(Get(v, Volume) == 23 && Get(v, MicGain) == 150 && Get(v, OutputMute) == 1);
+  assert(Get(v, OutputMono) == 1);
   assert(Get(v, MicMute) == 0);
   assert(Get(Set(v, Volume, 999), Volume) == 100);
-  assert(ParseText("; SABRENT\r\n[0d8c:0014]\r\nvolume=35\r\nmicrophone_gain=125\r\noutput_muted=1\r\n"
+  assert(ParseText("; SABRENT\r\n[0d8c:0014]\r\nvolume=35\r\nmicrophone_gain=125\r\noutput_muted=1\r\noutput_mono=1\r\n"
                    "; AirPods Max\n[05AC:110C]\nvolume=60\nmicrophone_muted=1\n"));
   assert(table.count == 2 && table.entries[0].key == 0x0d8c0014);
   assert(!strcmp(table.entries[0].name, "SABRENT"));
   assert(!strcmp(table.entries[1].name, "AirPods Max"));
   assert(Get(table.entries[0].levels, Volume) == 35);
+  assert(Get(table.entries[0].levels, OutputMono) == 1);
   assert(Get(table.entries[1].levels, Volume) == 60);
   assert(Get(table.entries[1].levels, MicGain) == 100);
+  assert(Get(table.entries[1].levels, OutputMono) == 0);
   size_t size = 0;
   assert(Format(table, output, sizeof(output), &size));
   assert(Parse(output, size, &roundtrip));
@@ -30,6 +35,7 @@ int main() {
   assert(!ParseText("[0d8c:0014]\nvolume=101\n"));
   assert(!ParseText("[0d8c:0014]\nmicrophone_gain=-1\n"));
   assert(!ParseText("[0d8c:0014]\noutput_muted=2\n"));
+  assert(!ParseText("[0d8c:0014]\noutput_mono=2\n"));
   assert(!ParseText("[0d8c:0014]\nvolume=42949672960\n"));
   assert(!ParseText("[0d8c:0014]\nvolume=12x\n"));
   assert(!ParseText("[not a device]\nvolume=30\n"));

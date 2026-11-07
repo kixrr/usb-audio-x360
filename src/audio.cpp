@@ -527,6 +527,7 @@ static void __cdecl RenderCaptureCallback(void*) {
     rendered_percent = volume_percent;
   }
   float gain = AudioIsOutputMuted() ? 0.0f : rendered_gain;
+  const bool mono = AudioIsOutputMono() != FALSE;
   SHORT test_samples[256];
   bool test_playback = g_mic_test_status != 0;
   if (test_playback) memset(test_samples, 0, sizeof(test_samples));
@@ -549,6 +550,14 @@ static void __cdecl RenderCaptureCallback(void*) {
     usb_mix::FoldFrame(g_render_frame.samples, (unsigned)sample, &left, &right);
     left *= gain;
     right *= gain;
+    if (mono) {
+      // Collapse the stereo pair to one signal and feed both ears. This is a
+      // post-fold average, so the 5.1 coefficients above stay unchanged and
+      // the mono signal can never peak above the stereo pair it came from.
+      float monaural;
+      usb_mix::FoldMono(left, right, &monaural);
+      left = right = monaural;
+    }
     if (test_playback) {
       // Isolate live monitoring in USB output only; HDMI and game voice stay
       // unchanged. A busy monitor buffer emits silence, never unrelated audio.
@@ -2116,6 +2125,14 @@ VOID AudioSetOutputMuted(BOOL muted) {
 
 BOOL AudioIsOutputMuted() {
   return SettingsGet(audio_settings::OutputMute) != 0;
+}
+
+VOID AudioSetOutputMono(BOOL mono) {
+  SettingsSet(audio_settings::OutputMono, mono ? 1 : 0);
+}
+
+BOOL AudioIsOutputMono() {
+  return SettingsGet(audio_settings::OutputMono) != 0;
 }
 
 VOID AudioSetMicrophoneMuted(BOOL muted) {
