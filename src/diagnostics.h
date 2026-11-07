@@ -51,5 +51,12 @@ void DiagnosticsDisconnected();
 // even if the Guide thread later stalls, so the last entry shows how far the UI
 // got before a hang.
 void DiagnosticsUi(const char* tag, DWORD a, DWORD b);
+// Storage trace: tag names the operation, a is elapsed milliseconds (or the
+// device key), b is success/state. Used to correlate a Guide stall with a
+// plugin file operation.
+void DiagnosticsStorage(const char* tag, DWORD a, DWORD b);
+// Notification loop gap, in milliseconds. Logged after the stall ends, so it
+// survives even when the log itself was blocked.
+void DiagnosticsWorkerGap(DWORD gap_ms);
 void DiagnosticsTick();
 bool DiagnosticsSettingsPath(char* output, DWORD capacity);

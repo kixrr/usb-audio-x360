@@ -2,6 +2,7 @@
 #include "settings.h"
 #include "audio.h"
 #include "diagnostics.h"
+#include "storage_gate.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -10,6 +11,9 @@ using namespace audio_settings;
 static CRITICAL_SECTION g_lock;
 static Table g_table;
 static volatile LONG g_ready = 0, g_active = -1, g_generation = 0;
+// A device can be claimed before the storage worker finishes its first read.
+// Remember it instead of dropping it, and select it once the table is loaded.
+static volatile LONG g_pending_key = 0, g_pending_device = 0;
 static volatile LONG g_fallback = kDefault;
 static char g_path[MAX_PATH], g_backup[MAX_PATH], g_temp[MAX_PATH];
 // Large buffers belong to this worker, not its stack or the audio thread.
@@ -73,7 +77,9 @@ static bool Save() {
   if (f == INVALID_HANDLE_VALUE) return false;
   DWORD written = 0;
   bool ok = WriteFile(f, g_bytes, (DWORD)size, &written, 0) && written == size;
-  if (ok) ok = FlushFileBuffers(f) != FALSE;
+  // No FlushFileBuffers here. On this console a flush can park for minutes on
+  // the FATX device while the Guide needs the same device to load its next
+  // scene. CloseHandle is enough; the data is committed by the cache.
   CloseHandle(f);
   if (!ok) return false;
   DWORD attrs = GetFileAttributesA(g_path);
@@ -141,15 +147,8 @@ BOOL SettingsSet(audio_settings::Field field, LONG value) {
   }
   return FALSE; // Never wait indefinitely in the IR callback.
 }
-VOID SettingsSelectDevice(WORD vendor, WORD product) {
-  // Only the audio worker selects devices, before opening their endpoints.
-  // Disk I/O never holds this lock; setters/getters never acquire it.
-  if (!InterlockedCompareExchange(&g_ready, 0, 0)) {
-    InterlockedExchange(&g_active, -1);
-    return; // Storage is optional: do not wait on a blocked initial read.
-  }
-  unsigned key = ((unsigned)vendor << 16) | product;
-  EnterCriticalSection(&g_lock);
+// Caller holds g_lock. Returns the entry index for key, creating it if needed.
+static LONG SelectKeyLocked(unsigned key) {
   unsigned i = 0;
   while (i < g_table.count && g_table.entries[i].key != key) ++i;
   if (i == g_table.count && i < kCapacity) {
@@ -158,29 +157,79 @@ VOID SettingsSelectDevice(WORD vendor, WORD product) {
     ++g_table.count;
     InterlockedIncrement(&g_generation);
   }
-  InterlockedExchange(&g_active, i < kCapacity ? (LONG)i : -1);
+  return i < kCapacity ? (LONG)i : -1;
+}
+VOID SettingsSelectDevice(WORD vendor, WORD product) {
+  // Only the audio worker selects devices, before opening their endpoints.
+  // Disk I/O never holds this lock; setters/getters never acquire it.
+  unsigned key = ((unsigned)vendor << 16) | product;
+  if (!InterlockedCompareExchange(&g_ready, 0, 0)) {
+    // Storage is optional: do not wait on a blocked initial read. Keep the
+    // key so the first device of the boot still gets persisted.
+    InterlockedExchange(&g_pending_key, (LONG)key);
+    InterlockedExchange(&g_pending_device, 1);
+    if (!InterlockedCompareExchange(&g_ready, 0, 0)) {
+      InterlockedExchange(&g_active, -1);
+      return;
+    }
+  }
+  EnterCriticalSection(&g_lock);
+  InterlockedExchange(&g_pending_device, 0);
+  InterlockedExchange(&g_active, SelectKeyLocked(key));
   LeaveCriticalSection(&g_lock);
 }
 DWORD WINAPI SettingsWorker(void*) {
   bool writable = false;
-  if (g_path[0] && Load(&writable)) g_table = g_snapshot;
+  if (g_path[0]) {
+    StorageLock();
+    bool loaded = Load(&writable);
+    StorageUnlock();
+    if (loaded) g_table = g_snapshot;
+  }
   InterlockedExchange(&g_ready, 1);
+  if (InterlockedCompareExchange(&g_pending_device, 0, 0) == 1) {
+    unsigned key = (unsigned)InterlockedCompareExchange(&g_pending_key, 0, 0);
+    EnterCriticalSection(&g_lock);
+    InterlockedExchange(&g_active, SelectKeyLocked(key));
+    InterlockedExchange(&g_pending_device, 0);
+    LeaveCriticalSection(&g_lock);
+    DiagnosticsStorage("settings-pending", key, 1);
+  }
   LONG saved = 0, observed = 0;
   DWORD changed = GetTickCount(), attempted = changed - 10000u;
   DWORD retry = 10000;
   DWORD last_load = changed;
+  // Keep writes out of the Guide's scene-transition window. The timer is
+  // restarted whenever a panel is alive, so a change made in the settings page
+  // is written a few seconds after the page is gone.
+  DWORD ui_quiet = GetTickCount();
+  bool defer_logged = false;
   for (;;) {
     Sleep(500);
     if (!writable && g_path[0] && GetTickCount() - last_load >= 30000u) {
       bool can_write = false;
-      if (Load(&can_write) && can_write) writable = MergeLoaded();
+      StorageLock();
+      bool loaded = Load(&can_write);
+      StorageUnlock();
+      if (loaded && can_write) writable = MergeLoaded();
       last_load = GetTickCount();
     }
     UpdateName();
     LONG generation = InterlockedCompareExchange(&g_generation, 0, 0);
     DWORD now = GetTickCount();
     if (generation != observed) { observed = generation; changed = now; }
-    if (!writable || generation == saved || !SaveDue(now, changed, attempted, retry)) continue;
+    if (!writable || generation == saved) { defer_logged = false; continue; }
+    bool ui_active = StorageIsUiActive();
+    if (ui_active) ui_quiet = now;
+    if (ui_active || now - ui_quiet < 3000u) {
+      if (!defer_logged && SaveDue(now, changed, attempted, retry)) {
+        DiagnosticsStorage("settings-defer", (DWORD)generation, (DWORD)saved);
+        defer_logged = true;
+      }
+      continue;
+    }
+    if (!SaveDue(now, changed, attempted, retry)) continue;
+    defer_logged = false;
     EnterCriticalSection(&g_lock);
     LONG snapshot_generation = InterlockedCompareExchange(&g_generation, 0, 0);
     g_snapshot.count = g_table.count;
@@ -190,7 +239,12 @@ DWORD WINAPI SettingsWorker(void*) {
       g_snapshot.entries[i].levels = InterlockedCompareExchange(Levels(i), 0, 0);
     }
     LeaveCriticalSection(&g_lock);
+    DWORD save_started = GetTickCount();
+    StorageLock();
     bool ok = Save();
+    StorageUnlock();
+    DWORD elapsed = GetTickCount() - save_started;
+    DiagnosticsStorage("settings-save", elapsed, ok ? 1 : 0);
     attempted = GetTickCount();
     retry = ok ? 10000 : 30000;
     if (ok) saved = snapshot_generation;

@@ -25,7 +25,7 @@ $env:TEMP = $env:TMP
 $sources = @(
   'driver.cpp','audio.cpp','settings.cpp','settings_ini.cpp','guide_ui.cpp',
   'remote_volume.cpp','diagnostics.cpp','xbox_usb_transport.cpp',
-  'uac_descriptors.cpp','uac_clock.cpp','detour.cpp'
+  'uac_descriptors.cpp','uac_clock.cpp','detour.cpp','storage_gate.cpp'
 )
 $headers = @(
   'audio.h','settings.h','settings_ini.h','guide_ui.h','remote_volume.h',
@@ -35,7 +35,8 @@ $headers = @(
   'control_deadline.h','test_tone.h','uac_descriptors.h','uac_clock.h',
   'uac_setup_policy.h','pcm_packet.h','playback_pacer.h','playback_profile.h',
   'capture_profile.h','mic_pcm.h','mic_gain.h','mic_test.h','surround_downmix.h',
-  'usb_strings.h','mic_packet_policy.h','debug_command.h','detour.h'
+  'usb_strings.h','mic_packet_policy.h','debug_command.h','detour.h',
+  'storage_gate.h'
 )
 
 Get-ChildItem $BuildDir -File -ErrorAction SilentlyContinue | Remove-Item -Force

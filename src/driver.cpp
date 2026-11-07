@@ -12,6 +12,7 @@
 #include "uac_descriptors.h"
 #include "xbox_usb_transport.h"
 #include "detour.h"
+#include "storage_gate.h"
 
 extern "C" LONG XexGetProcedureAddress(HANDLE module, DWORD ordinal,
                                         PVOID address);
@@ -638,11 +639,18 @@ static DWORD WINAPI AudioWorker(void*) {
 }
 
 static DWORD WINAPI NotificationWorker(void*) {
+  DWORD last = GetTickCount();
   for (;;) {
     GuideUiTick();
     AudioNotificationTick();
     VoiceBindingTick();
     DiagnosticsTick();
+    // A stalled loop is the signal that matters when the Guide freezes: the
+    // tick that logs the gap runs after the stall, so the evidence survives.
+    DWORD now = GetTickCount();
+    DWORD gap = now - last;
+    last = now;
+    if (gap >= 1000u) DiagnosticsWorkerGap(gap);
     Sleep(100);
   }
 }
@@ -678,6 +686,7 @@ extern "C" BOOL APIENTRY DllMain(HANDLE module, DWORD reason, LPVOID) {
   if (Resolve(kernel, 412, &pc_to_file_header))
     pc_to_file_header((PVOID)DiagnosticsInitialize, &loader_entry);
   DiagnosticsInitialize(loader_entry, version->build);
+  StorageInitialize();
   SettingsInitialize();
 
   if (!Resolve(kernel, 759, &g_get_device_descriptor) ||
