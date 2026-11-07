@@ -137,6 +137,8 @@ after storage becomes available to restore saved levels.
 | Apple AirPods Max USB Audio | UAC2 | `05ac:110c` | USB-A-to-USB-C cable | Output |
 | [SPACETOUCH USB Audio](https://www.amazon.com.au/dp/B0GT9K55KX) | UAC1 | `0666:0880` | USB-A | Output and Microphone |
 | Sennheiser MOMENTUM 3 Wireless | UAC1 | `1377:6004` | USB-A-to-USB-C cable | Output |
+| Sony Inzone H9 II | UAC1 | `054c:0Fa9` |USB-C wireless dongle with USB-A adapter (Dongle switched to "OTHER"-position) | Output and Microphone |
+| UGREEN-BT501 + BT Earbuds | UAC1 | `0a12:4007` | USB-C Bluetooth dongle with USB-A adapter + BT Earbuds | Output |
 
 Compatibility is determined from each device's USB Audio descriptors, not
 from a device allowlist. Other devices may work, but not every UAC1 or UAC2
