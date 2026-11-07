@@ -47,5 +47,9 @@ void DiagnosticsFailure(DWORD error, DWORD stage, DWORD request,
                         const uac::Format& format);
 void DiagnosticsStreaming();
 void DiagnosticsDisconnected();
+// Low-volume Guide UI trace. The notification thread keeps draining this queue
+// even if the Guide thread later stalls, so the last entry shows how far the UI
+// got before a hang.
+void DiagnosticsUi(const char* tag, DWORD a, DWORD b);
 void DiagnosticsTick();
 bool DiagnosticsSettingsPath(char* output, DWORD capacity);

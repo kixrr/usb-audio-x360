@@ -35,6 +35,7 @@ enum EventType {
   kEventFailure = 5,
   kEventStreaming = 6,
   kEventDisconnected = 7,
+  kEventUi = 8,
 };
 
 struct Event {
@@ -252,6 +253,10 @@ static void WriteEvent(FILE* file, const Event& event) {
     case kEventDisconnected:
       fprintf(file, "tick=%lu event=disconnected\n", event.tick);
       break;
+    case kEventUi:
+      fprintf(file, "tick=%lu event=ui tag=%s a=0x%08lx b=0x%08lx\n",
+              event.tick, (const char*)event.payload, v[0], v[1]);
+      break;
   }
 }
 
@@ -385,6 +390,12 @@ void DiagnosticsFailure(DWORD error, DWORD stage, DWORD request,
 
 void DiagnosticsStreaming() { Queue(kEventStreaming, 0, 0, 0, 0); }
 void DiagnosticsDisconnected() { Queue(kEventDisconnected, 0, 0, 0, 0); }
+
+void DiagnosticsUi(const char* tag, DWORD a, DWORD b) {
+  if (!tag) return;
+  DWORD values[2] = {a, b};
+  Queue(kEventUi, values, 2, tag, (DWORD)strlen(tag) + 1);
+}
 
 void DiagnosticsTick() {
   if (!g_initialized) return;

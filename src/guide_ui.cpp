@@ -7,6 +7,7 @@
 #include <math.h>
 #include "audio.h"
 #include "detour.h"
+#include "diagnostics.h"
 #include "guide_icons.h"
 #include "guide_layout.h"
 
@@ -221,6 +222,14 @@ struct SettingsScene {
   BYTE user;
   bool focus_pending, testing, returning;
   bool synchronizing;
+  // Timer lifetime. A queued refresh must never touch a scene that is leaving
+  // or whose children XUI has already destroyed.
+  bool active, timer_armed, destroyed;
+  // Last values written to the controls, so idle ticks stay quiet instead of
+  // re-entering XUI with redundant set-check/property messages.
+  LONG shown_mute, shown_mono, shown_mic_mute, shown_testing;
+  bool recording_ready, recording_visible;
+  bool nav_ready, nav_microphone;
 };
 const DWORD kSettingsRefreshTimer = 0x55534253;
 const DWORD kVolumeRefreshTimer = 0x55534256;
@@ -231,13 +240,30 @@ bool RegisterSettingsClass();
 bool OpenProperties(SettingsScene* state, BYTE user);
 void RefreshDeviceInfo(SettingsScene* state);
 
+// Stop refreshing as soon as the page starts leaving. XUI tears the children
+// down after the transition, so a tick that lands in that window would send a
+// set-check/property message to an object that is already gone and can wedge
+// the Guide thread on the scene lock. Re-arm only when the page is shown again.
+HRESULT ArmSettingsTimer(HXUIOBJ object, SettingsScene* state) {
+  if (!state || state->destroyed || state->timer_armed) return S_OK;
+  HRESULT result = g_xui.set_timer(object, kSettingsRefreshTimer, 100);
+  if (SUCCEEDED(result)) state->timer_armed = true;
+  return result;
+}
+
+void DisarmSettingsTimer(HXUIOBJ object, SettingsScene* state) {
+  if (!state || !state->timer_armed) return;
+  g_xui.kill_timer(object, kSettingsRefreshTimer);
+  state->timer_armed = false;
+}
+
 bool DacConnected() {
   AudioDeviceInfo info;
   return AudioGetDeviceInfo(&info) && info.connected;
 }
 
 void RefreshRowVisibility(VolumeScene* state) {
-  if (!state || !state->layout_ready) return;
+  if (!state || !state->layout_ready || !g_xui.valid(state->object)) return;
   AudioDeviceInfo info;
   if (!AudioGetDeviceInfo(&info)) return;
   const bool visible = info.connected != FALSE;
@@ -257,7 +283,8 @@ void RefreshRowVisibility(VolumeScene* state) {
 }
 
 void Synchronize(VolumeScene* state) {
-  if (!state || !state->slider || state->synchronizing) return;
+  if (!state || !state->slider || state->synchronizing ||
+      !g_xui.valid(state->object)) return;
   state->synchronizing = true;
   LONG volume = AudioGetVolume();
   g_xui.set_slider(state->slider, volume);
@@ -309,7 +336,8 @@ bool MeterRectangle(HXUIOBJ object, float width, float height, DWORD color) {
 }
 
 void RefreshSettings(SettingsScene* state) {
-  if (!state || state->synchronizing) return;
+  if (!state || state->destroyed || state->synchronizing) return;
+  if (!g_xui.valid(state->object)) return;
   RefreshDeviceInfo(state);
   if (state->properties) return;
   state->synchronizing = true;
@@ -341,7 +369,10 @@ void RefreshSettings(SettingsScene* state) {
       ? L"Use headphones. Game sound is temporarily replaced."
       : L"Speak normally to check the level.");
   g_xui.set_text(state->test_status, status);
-  SetCheck(state->test_button, state->testing);
+  if ((LONG)state->testing != state->shown_testing) {
+    SetCheck(state->test_button, state->testing);
+    state->shown_testing = state->testing;
+  }
   DWORD now = GetTickCount();
   if (clipped) { state->clipped_at = now; state->clip_latched = true; }
   if (!microphone || now - state->clipped_at >= 2000) state->clip_latched = false;
@@ -363,16 +394,39 @@ void RefreshSettings(SettingsScene* state) {
     state->volume = volume;
     g_xui.set_slider(state->volume_slider, volume);
   }
-  SetCheck(state->output_mute, AudioIsOutputMuted());
-  SetCheck(state->output_mono, AudioIsOutputMono());
-  SetCheck(state->mic_mute, AudioIsMicrophoneMuted());
+  // Only write a control when its value actually changed. Each synchronous
+  // set-check/property message can re-enter XUI, so an idle tick must not send
+  // anything at all.
+  const LONG muted = AudioIsOutputMuted();
+  if (muted != state->shown_mute) {
+    SetCheck(state->output_mute, muted != 0);
+    state->shown_mute = muted;
+  }
+  const LONG mono = AudioIsOutputMono();
+  if (mono != state->shown_mono) {
+    SetCheck(state->output_mono, mono != 0);
+    state->shown_mono = mono;
+  }
+  const LONG mic_muted = AudioIsMicrophoneMuted();
+  if (mic_muted != state->shown_mic_mute) {
+    SetCheck(state->mic_mute, mic_muted != 0);
+    state->shown_mic_mute = mic_muted;
+  }
   SetBool(state->mic_mute, L"Enabled", microphone);
-  const HXUIOBJ recording[] = {state->gain_slider, state->gain_value, state->mic_mute,
-      state->meter, state->meter_label, state->test_button, Find(state->object, L"MicPeakBackground")};
-  for (unsigned i = 0; i < _countof(recording); ++i) SetBool(recording[i], L"Show", microphone);
-  SetString(state->output_mute, L"NavDown", L"SettingsOutputMono");
-  SetString(state->output_mono, L"NavDown", microphone ? L"MicrophoneGainSlider" : L"DevicePropertiesButton");
-  SetString(state->properties_button, L"NavUp", microphone ? L"MicrophoneTestButton" : L"SettingsOutputMono");
+  if (!state->recording_ready || state->recording_visible != microphone) {
+    const HXUIOBJ recording[] = {state->gain_slider, state->gain_value, state->mic_mute,
+        state->meter, state->meter_label, state->test_button, Find(state->object, L"MicPeakBackground")};
+    for (unsigned i = 0; i < _countof(recording); ++i) SetBool(recording[i], L"Show", microphone);
+    state->recording_ready = true;
+    state->recording_visible = microphone;
+  }
+  if (!state->nav_ready || state->nav_microphone != microphone) {
+    SetString(state->output_mute, L"NavDown", L"SettingsOutputMono");
+    SetString(state->output_mono, L"NavDown", microphone ? L"MicrophoneGainSlider" : L"DevicePropertiesButton");
+    SetString(state->properties_button, L"NavUp", microphone ? L"MicrophoneTestButton" : L"SettingsOutputMono");
+    state->nav_ready = true;
+    state->nav_microphone = microphone;
+  }
   LONG gain = AudioGetMicrophoneGain();
   if (gain != state->gain) {
     state->gain = gain;
@@ -445,6 +499,12 @@ HRESULT APIENTRY SettingsObjectProc(HXUIOBJ object, XUIMessage* message,
   if (!state || !message) return S_OK;
   if (message->dwMessage == XM_INIT) {
     state->object = object;
+    state->active = true;
+    // Force the first refresh to publish every control.
+    state->shown_mute = state->shown_mono = state->shown_mic_mute = -1;
+    state->shown_testing = -1;
+    state->recording_ready = state->nav_ready = false;
+    DiagnosticsUi("settings-init", (DWORD)object, 0);
     state->back_button = Find(object, L"SettingsBackButton");
     state->gain_slider = Find(object, L"MicrophoneGainSlider");
     state->gain_value = Find(object, L"MicrophoneGainValue");
@@ -454,7 +514,7 @@ HRESULT APIENTRY SettingsObjectProc(HXUIOBJ object, XUIMessage* message,
     if (state->properties) {
       if (!state->back_button || !state->device_info) return E_FAIL;
       RefreshDeviceInfo(state);
-      return g_xui.set_timer(object, kSettingsRefreshTimer, 100);
+      return ArmSettingsTimer(object, state);
     }
     state->test_button = Find(object, L"MicrophoneTestButton");
     state->test_status = Find(object, L"MicrophoneTestStatus");
@@ -473,17 +533,22 @@ HRESULT APIENTRY SettingsObjectProc(HXUIOBJ object, XUIMessage* message,
     state->gain = state->volume = -1;
     state->meter_db = -60;
     RefreshSettings(state);
-    return g_xui.set_timer(object, kSettingsRefreshTimer, 100);
+    return ArmSettingsTimer(object, state);
   } else if (message->dwMessage == XM_TIMER && message->pvData &&
       message->cbData >= sizeof(XUIMessageTimer) &&
       ((XUIMessageTimer*)message->pvData)->nId == kSettingsRefreshTimer) {
-    if (state->focus_pending && !g_xui.in_transition(object)) {
+    // A queued tick can arrive after the page started leaving. Never touch a
+    // page that is transitioning, being destroyed, or no longer focused.
+    if (!state->active || state->destroyed || !g_xui.valid(object) ||
+        g_xui.in_transition(object)) return S_OK;
+    if (!g_xui.tree_has_focus(object) && !state->focus_pending) return S_OK;
+    if (state->focus_pending) {
       g_xui.set_user_focus(state->properties ? state->back_button :
           (state->returning ? state->properties_button : state->volume_slider), state->user);
       state->focus_pending = false;
     }
     AudioDeviceInfo info;
-    if (AudioGetDeviceInfo(&info) && !info.connected && g_xui.tree_has_focus(object) && !g_xui.in_transition(object)) {
+    if (AudioGetDeviceInfo(&info) && !info.connected && g_xui.tree_has_focus(object)) {
       AudioStopMicrophoneTest();
       SettingsBack(object, state->user);
       return S_OK;
@@ -496,6 +561,9 @@ HRESULT APIENTRY SettingsObjectProc(HXUIOBJ object, XUIMessage* message,
     if (transition == XUI_TRANSITION_TO || transition == XUI_TRANSITION_BACKTO) {
       state->returning = transition == XUI_TRANSITION_BACKTO;
       state->focus_pending = true;
+      state->active = true;
+      ArmSettingsTimer(object, state);
+      DiagnosticsUi("settings-enter", transition, (DWORD)object);
     }
   } else if (message->dwMessage == XM_TRANSITION_START && message->pvData &&
       message->cbData >= sizeof(XUIMessageTransition)) {
@@ -503,28 +571,33 @@ HRESULT APIENTRY SettingsObjectProc(HXUIOBJ object, XUIMessage* message,
     if (transition == XUI_TRANSITION_FROM || transition == XUI_TRANSITION_BACKFROM) {
       state->focus_pending = false;
       state->testing = false;
+      state->active = false;
       AudioStopMicrophoneTest();
+      DisarmSettingsTimer(object, state);
+      DiagnosticsUi("settings-leave", transition, (DWORD)object);
     }
   } else if (message->dwMessage == XM_DESTROY) {
+    state->destroyed = true;
+    state->active = false;
+    DisarmSettingsTimer(object, state);
     g_xui.kill_timer(object, kSettingsRefreshTimer);
     AudioStopMicrophoneTest();
+    DiagnosticsUi("settings-destroy", (DWORD)object, 0);
   } else if (message->dwMessage == XM_NOTIFY && message->pvData &&
            message->cbData >= sizeof(XUINotify)) {
     XUINotify* notify = (XUINotify*)message->pvData;
     if (notify->dwNotify == XN_VALUE_CHANGED &&
         notify->hObjSource == state->gain_slider && !state->synchronizing) {
       int gain = 0;
-      if (g_xui.get_slider(state->gain_slider, &gain) >= 0) {
+      if (g_xui.get_slider(state->gain_slider, &gain) >= 0)
         AudioSetMicrophoneGain(gain);
-        RefreshSettings(state);
-
-      }
+      // The 100 ms timer publishes the change; do not re-enter XUI from inside
+      // this notification dispatch.
       message->bHandled = TRUE;
     } else if (notify->dwNotify == XN_VALUE_CHANGED &&
         notify->hObjSource == state->volume_slider && !state->synchronizing) {
       int volume = 0;
       if (g_xui.get_slider(state->volume_slider, &volume) >= 0) AudioSetVolume(volume);
-      RefreshSettings(state);
       message->bHandled = TRUE;
     } else if (notify->dwNotify == XN_PRESS &&
         (notify->hObjSource == state->output_mute ||
@@ -533,7 +606,8 @@ HRESULT APIENTRY SettingsObjectProc(HXUIOBJ object, XUIMessage* message,
       if (notify->hObjSource == state->output_mute) AudioSetOutputMuted(!AudioIsOutputMuted());
       else if (notify->hObjSource == state->mic_mute) AudioSetMicrophoneMuted(!AudioIsMicrophoneMuted());
       else AudioSetOutputMono(!AudioIsOutputMono());
-      RefreshSettings(state);
+      DiagnosticsUi("settings-toggle", (DWORD)notify->hObjSource,
+                    (DWORD)AudioIsOutputMono());
       message->bHandled = TRUE;
     } else if (notify->dwNotify == XN_PRESS && notify->hObjSource == state->properties_button) {
       OpenProperties(state, PressUser(notify));
@@ -542,10 +616,10 @@ HRESULT APIENTRY SettingsObjectProc(HXUIOBJ object, XUIMessage* message,
         notify->hObjSource == state->test_button) {
       if (state->testing) { AudioStopMicrophoneTest(); state->testing = false; }
       else state->testing = AudioStartMicrophoneTest() != FALSE;
-      RefreshSettings(state);
       message->bHandled = TRUE;
     } else if (notify->dwNotify == XN_PRESS &&
         notify->hObjSource == state->back_button) {
+      DiagnosticsUi("settings-back", (DWORD)object, state->returning ? 1 : 0);
       SettingsBack(object, PressUser(notify));
       message->bHandled = TRUE;
     }
@@ -569,6 +643,7 @@ HRESULT APIENTRY VolumeObjectProc(HXUIOBJ object, XUIMessage* message, void* ins
   } else if (message->dwMessage == XM_TIMER && message->pvData &&
       message->cbData >= sizeof(XUIMessageTimer) &&
       ((XUIMessageTimer*)message->pvData)->nId == kVolumeRefreshTimer) {
+    if (!g_xui.valid(object)) return S_OK;
     RefreshRowVisibility(state);
     // External focus changes (including closing/switching the Guide) must
     // not leave a stale expanded row or steal focus back from the new view.
@@ -817,6 +892,9 @@ bool OpenProperties(SettingsScene* state, BYTE user) {
 
 bool OpenSettings(VolumeScene* state, BYTE user) {
   if (!state || !state->host_scene || !DacConnected() || !RegisterSettingsClass()) return false;
+  // Ignore a repeated press while the page is already opening or closing.
+  if (!g_xui.valid(state->host_scene) || g_xui.in_transition(state->object)) return false;
+  DiagnosticsUi("settings-open", (DWORD)state->object, (DWORD)user);
   // Expanded pages navigate from the outer HUDScene rather than its Media
   // tab. SceneCreateHook records the actual object
   // returned for GuideMain.xur; validate the observed native ID before use.
