@@ -10,7 +10,7 @@ The fix mixes all the channels of the 5.1 sound down to stereo so you can hear t
 Made with AI (MiMo-V2.6-Flash) and tested on a real Xbox 360.
 
 **One additional note: Disable the xbdm.xex plugin if you have it enabled. I've noticed that the console sometimes freezes when xbdm.xex is enabled and you are using 
-usb-audio-x360.**
+USB Audio 360.**
 
 ## Changes in this fork
 
