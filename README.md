@@ -9,6 +9,9 @@ The reason why you can't hear the voices in usb-audio-x360 v0.1.4 is because it 
 The fix mixes all the channels of the 5.1 sound down to stereo so you can hear the voices from the center channel again.  
 Made with AI (MiMo-V2.6-Flash) and tested on a real Xbox 360.
 
+One additional note: Disable the xbdm.xex plugin if you have it enabled. I've noticed that the console sometimes freezes when xbdm.xex is enabled and you are using 
+usb-audio-x360.
+
 ## Changes in this fork
 
 - **Always-on 5.1 → stereo downmix:** Center and surround channels are
