@@ -22,11 +22,11 @@ USB Audio 360.**
   output to mono and plays it in both ears — useful for single-sided hearing
   or mono headsets. The fold averages the stereo pair, so it cannot clip
   more than the stereo signal already does.
-- **Guide settings hardening:** Settings are written a few seconds after you
-  leave the USB Audio settings page — normally while the Guide is still open,
-  so by the time you close the Guide the value is already on disk. Nothing is
-  written while the settings page itself is open. Give it two or three seconds
-  in the Guide before switching the console off. This targets the intermittent
+- **Guide settings hardening:** Settings are written about two seconds after
+  you leave the USB Audio settings page, normally while the Guide is still
+  open, so by the time you close the Guide the value is already on disk.
+  Nothing is written while the settings page itself is open, and opening or
+  closing the Guide restarts that short delay. This targets the intermittent
   Guide freeze after opening the USB Audio settings page; plugin file I/O is
   serialized and scene navigation is never started from inside an input
   notification.

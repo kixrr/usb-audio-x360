@@ -19,6 +19,17 @@ static char g_path[MAX_PATH], g_backup[MAX_PATH];
 // Large buffers belong to this worker, not its stack or the audio thread.
 static Table g_snapshot;
 static char g_bytes[32769];
+// The INI handle stays open for the whole boot. CreateFile was the single
+// slowest step of a save on hardware (3.5-20 s for a 286-byte file); with the
+// handle already open a save is one write plus a truncate.
+static HANDLE g_ini = INVALID_HANDLE_VALUE;
+
+static void CloseIni() {
+  if (g_ini != INVALID_HANDLE_VALUE) {
+    CloseHandle(g_ini);
+    g_ini = INVALID_HANDLE_VALUE;
+  }
+}
 
 static volatile LONG* Levels(LONG index) {
   return index >= 0 && index < (LONG)kCapacity
@@ -74,34 +85,33 @@ static bool Save() {
   size_t size = 0;
   if (!Format(g_snapshot, g_bytes, sizeof(g_bytes), &size)) return false;
   DWORD started = GetTickCount();
-  HANDLE f = CreateFileA(g_path, GENERIC_WRITE, 0, 0, OPEN_ALWAYS,
-                         FILE_ATTRIBUTE_NORMAL, 0);
-  DWORD open_ms = GetTickCount() - started;
-  if (f == INVALID_HANDLE_VALUE) {
-    DiagnosticsStorage("save-open", open_ms, GetLastError());
-    return false;
+  if (g_ini == INVALID_HANDLE_VALUE) {
+    g_ini = CreateFileA(g_path, GENERIC_WRITE,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                        0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+    DWORD open_ms = GetTickCount() - started;
+    if (g_ini == INVALID_HANDLE_VALUE) {
+      DiagnosticsStorage("save-open", open_ms, GetLastError());
+      return false;
+    }
+    DiagnosticsStorage("save-open", open_ms, 1);
   }
   started = GetTickCount();
-  SetFilePointer(f, 0, 0, FILE_BEGIN);
+  SetFilePointer(g_ini, 0, 0, FILE_BEGIN);
   DWORD written = 0;
-  bool ok = WriteFile(f, g_bytes, (DWORD)size, &written, 0) != FALSE &&
+  bool ok = WriteFile(g_ini, g_bytes, (DWORD)size, &written, 0) != FALSE &&
             written == size;
   DWORD write_ms = GetTickCount() - started;
   DWORD truncate_ms = 0;
   if (ok) {
     started = GetTickCount();
-    ok = SetEndOfFile(f) != FALSE;
+    ok = SetEndOfFile(g_ini) != FALSE;
     truncate_ms = GetTickCount() - started;
   }
-  started = GetTickCount();
-  // No FlushFileBuffers here. On this console a flush can park for minutes on
-  // the FATX device while the Guide needs the same device to load its next
-  // scene. Closing the handle is enough; the cache commits it.
-  CloseHandle(f);
-  DiagnosticsStorage("save-io", open_ms, write_ms);
-  DiagnosticsStorage("save-close", GetTickCount() - started, truncate_ms);
-  if (!ok) return false;
-  return true;
+  // A failed write leaves the handle in an unknown state; reopen next time.
+  if (!ok) CloseIni();
+  DiagnosticsStorage("save-io", write_ms, truncate_ms);
+  return ok;
 }
 static void UpdateName() {
   AudioDeviceInfo info;
@@ -209,11 +219,11 @@ DWORD WINAPI SettingsWorker(void*) {
   DWORD changed = GetTickCount(), attempted = changed - 10000u;
   DWORD retry = 10000;
   DWORD last_load = changed;
-  // The settings page must be closed before anything is written. Once it is,
-  // a short quiet period is enough: the user is normally still sitting in the
-  // Guide, which is exactly the safe moment, and by the time the Guide is
-  // closed the value is already on disk. A Guide open/close also restarts the
-  // timer so a fresh GuideMain.xur load never coincides with a write.
+  // Write as soon as the settings page is gone: two seconds later the page
+  // transition has finished and the user is normally still sitting in the
+  // Guide, which is the safe state. GuideMain.xur creation is the one thing a
+  // write must never overlap, so opening or closing the Guide restarts this
+  // timer as well.
   DWORD ui_quiet = GetTickCount();
   LONG guide_seen = StorageIsGuideOpen() ? 1 : 0;
   DWORD panel_since = 0;
@@ -245,7 +255,7 @@ DWORD WINAPI SettingsWorker(void*) {
     // A settings panel should never live this long; if one leaks, do not let
     // persistence stop forever.
     const bool panel_stuck = panel && panel_since && now - panel_since >= 600000u;
-    if (!panel_stuck && now - ui_quiet < 3000u) {
+    if (!panel_stuck && now - ui_quiet < 2000u) {
       if (!defer_logged && SaveDue(now, changed, attempted, retry)) {
         DiagnosticsStorage("settings-defer", (DWORD)generation, (DWORD)saved);
         defer_logged = true;
