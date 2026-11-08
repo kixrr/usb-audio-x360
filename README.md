@@ -42,9 +42,6 @@ USB Audio 360.**
   (see [BUILDING.md](BUILDING.md)).
 - **Pre-built release:** [`v0.1.6-mono-option-beta`](https://github.com/kixrr/usb-audio-x360/releases/tag/v0.1.6-mono-option-beta)
   (experimental prerelease) with SHA-256 checksum.
-- **Known limitation (unchanged from v0.1.5):** plug the USB audio device in
-  *after* the console has booted. A device that is already connected at boot
-  is not picked up.
 - Based on [TimeoutTim/usb-audio-x360](https://github.com/TimeoutTim/usb-audio-x360)
   (v0.1.4).
 
