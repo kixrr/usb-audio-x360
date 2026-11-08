@@ -40,7 +40,7 @@ USB Audio 360.**
 - **Native Windows build:** `tools\build_plugin.ps1` builds against an
   installed XDK — no Wine, Xvfb, 7-Zip, or XexTool required
   (see [BUILDING.md](BUILDING.md)).
-- **Pre-built release:** [`v0.1.6-mono-option`](https://github.com/kixrr/usb-audio-x360/releases/tag/v0.1.6-mono-option)
+- **Pre-built release:** [`v0.1.5-stereo-downmix`](https://github.com/kixrr/usb-audio-x360/releases/tag/v0.1.5-stereo-downmix)
   (prerelease) with SHA-256 checksum.
 - Based on [TimeoutTim/usb-audio-x360](https://github.com/TimeoutTim/usb-audio-x360)
   (v0.1.4).
