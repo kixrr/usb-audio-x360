@@ -84,24 +84,28 @@ static bool MergeLoaded() {
   LeaveCriticalSection(&g_lock);
   return true;
 }
+static bool OpenIni() {
+  if (g_ini != INVALID_HANDLE_VALUE) return true;
+  DWORD started = GetTickCount();
+  g_ini = CreateFileA(g_path, GENERIC_WRITE,
+                      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                      0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+  DWORD open_ms = GetTickCount() - started;
+  if (g_ini == INVALID_HANDLE_VALUE) {
+    DiagnosticsStorage("save-open", open_ms, GetLastError());
+    return false;
+  }
+  DiagnosticsStorage("save-open", open_ms, 1);
+  return true;
+}
+
 static bool Save() {
   size_t size = 0;
   DWORD format_started = GetTickCount();
   if (!Format(g_snapshot, g_bytes, sizeof(g_bytes), &size)) return false;
   DiagnosticsStorage("save-format", GetTickCount() - format_started, (DWORD)size);
+  if (!OpenIni()) return false;
   DWORD started = GetTickCount();
-  if (g_ini == INVALID_HANDLE_VALUE) {
-    g_ini = CreateFileA(g_path, GENERIC_WRITE,
-                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                        0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
-    DWORD open_ms = GetTickCount() - started;
-    if (g_ini == INVALID_HANDLE_VALUE) {
-      DiagnosticsStorage("save-open", open_ms, GetLastError());
-      return false;
-    }
-    DiagnosticsStorage("save-open", open_ms, 1);
-  }
-  started = GetTickCount();
   SetFilePointer(g_ini, 0, 0, FILE_BEGIN);
   DWORD written = 0;
   bool ok = WriteFile(g_ini, g_bytes, (DWORD)size, &written, 0) != FALSE &&
@@ -209,6 +213,11 @@ DWORD WINAPI SettingsWorker(void*) {
   if (g_path[0]) {
     StorageLock();
     bool loaded = Load(&writable);
+    // Open the write handle at boot, while no Guide is on screen, so the
+    // first in-Guide save does not pay for CreateFile (seconds on hardware).
+    // Only when the file is writable: the recovery path below still needs to
+    // read it without a write handle in the way.
+    if (loaded && writable) OpenIni();
     StorageUnlock();
     if (loaded) g_table = g_snapshot;
   }
@@ -240,8 +249,11 @@ DWORD WINAPI SettingsWorker(void*) {
       bool can_write = false;
       StorageLock();
       bool loaded = Load(&can_write);
+      if (loaded && can_write && MergeLoaded()) {
+        writable = true;
+        OpenIni();
+      }
       StorageUnlock();
-      if (loaded && can_write) writable = MergeLoaded();
       last_load = GetTickCount();
     }
     UpdateName();
