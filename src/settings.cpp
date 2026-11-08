@@ -19,6 +19,9 @@ static char g_path[MAX_PATH], g_backup[MAX_PATH];
 // Large buffers belong to this worker, not its stack or the audio thread.
 static Table g_snapshot;
 static char g_bytes[32769];
+// Size of the last successful write. Rewriting the same size needs no
+// SetEndOfFile, which itself can take seconds on this console.
+static size_t g_last_size = (size_t)-1;
 // The INI handle stays open for the whole boot. CreateFile was the single
 // slowest step of a save on hardware (3.5-20 s for a 286-byte file); with the
 // handle already open a save is one write plus a truncate.
@@ -83,7 +86,9 @@ static bool MergeLoaded() {
 }
 static bool Save() {
   size_t size = 0;
+  DWORD format_started = GetTickCount();
   if (!Format(g_snapshot, g_bytes, sizeof(g_bytes), &size)) return false;
+  DiagnosticsStorage("save-format", GetTickCount() - format_started, (DWORD)size);
   DWORD started = GetTickCount();
   if (g_ini == INVALID_HANDLE_VALUE) {
     g_ini = CreateFileA(g_path, GENERIC_WRITE,
@@ -103,13 +108,14 @@ static bool Save() {
             written == size;
   DWORD write_ms = GetTickCount() - started;
   DWORD truncate_ms = 0;
-  if (ok) {
+  if (ok && size != g_last_size) {
     started = GetTickCount();
     ok = SetEndOfFile(g_ini) != FALSE;
     truncate_ms = GetTickCount() - started;
   }
   // A failed write leaves the handle in an unknown state; reopen next time.
   if (!ok) CloseIni();
+  else g_last_size = size;
   DiagnosticsStorage("save-io", write_ms, truncate_ms);
   return ok;
 }
@@ -283,11 +289,12 @@ DWORD WINAPI SettingsWorker(void*) {
     DiagnosticsStorage("settings-lock", lock_ms, elapsed);
     DiagnosticsStorage("settings-save", elapsed, ok ? 1 : 0);
     attempted = GetTickCount();
-    // Back off after a slow write: the FATX device can park for tens of
-    // seconds, and repeating the attempt immediately only multiplies the
-    // windows in which the Guide can stall loading a scene.
-    retry = !ok ? 30000 : (elapsed >= 30000u ? 300000u :
-                           (elapsed >= 5000u ? 60000u : 10000u));
+    // Space repeated writes by at least as long as the last one took, with a
+    // floor and a ceiling. A slow write must not turn into a fixed minute of
+    // no persistence for the next change.
+    DWORD backoff = elapsed < 5000u ? 5000u : elapsed;
+    if (backoff > 60000u) backoff = 60000u;
+    retry = ok ? backoff : 30000;
     if (ok) saved = snapshot_generation;
   }
 }

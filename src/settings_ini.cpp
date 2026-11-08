@@ -95,25 +95,59 @@ bool Parse(const char* data, size_t size, Table* table) {
   return true;
 }
 bool Format(const Table& table, char* data, size_t capacity, size_t* size) {
-  if (!data || !size || table.count > kCapacity) return false;
-  const char header[] = "; USB Audio 360 settings. Edit while the console is off.\r\n";
-  size_t used = sizeof(header)-1;
-  if (used >= capacity) return false;
-  memcpy(data, header, used);
-  for (unsigned i = 0; i < table.count; ++i) {
+  if (!data || !size || table.count > kCapacity || capacity < 1) return false;
+  // No sprintf/CRT here. The settings worker can be descheduled or blocked
+  // inside the C runtime's formatting path for tens of seconds on this
+  // console, and that delay used to land right before the file write.
+  struct Out {
+    char* p;
+    char* end;
+    bool ok;
+    void Text(const char* text) {
+      while (*text) { if (p >= end) { ok = false; return; } *p++ = *text++; }
+    }
+    void UInt(unsigned value) {
+      char digits[10];
+      int n = 0;
+      do { digits[n++] = (char)('0' + value % 10); value /= 10; } while (value);
+      while (n--) { if (p >= end) { ok = false; return; } *p++ = digits[n]; }
+    }
+    void Hex4(unsigned value) {
+      static const char kHex[] = "0123456789abcdef";
+      for (int shift = 12; shift >= 0; shift -= 4) {
+        if (p >= end) { ok = false; return; }
+        *p++ = kHex[(value >> shift) & 15];
+      }
+    }
+  } out = {data, data + capacity - 1, true};
+  out.Text("; USB Audio 360 settings. Edit while the console is off.\r\n");
+  for (unsigned i = 0; i < table.count && out.ok; ++i) {
     const Entry& e = table.entries[i];
     char name[128]; unsigned j = 0;
     for (; j < 127 && e.name[j]; ++j)
       name[j] = (unsigned char)e.name[j] < 32 || e.name[j] == 127 ? ' ' : e.name[j];
     name[j] = 0;
-    char line[384];
-    int n = sprintf(line, "\r\n; %s\r\n[%04x:%04x]\r\nvolume=%u\r\nmicrophone_gain=%u\r\noutput_muted=%u\r\nmicrophone_muted=%u\r\noutput_mono=%u\r\n",
-        *name ? name : "USB Audio Device", e.key >> 16, e.key & 65535,
-        Get(e.levels, Volume), Get(e.levels, MicGain), Get(e.levels, OutputMute), Get(e.levels, MicMute),
-        Get(e.levels, OutputMono));
-    if (n < 0 || used + (size_t)n >= capacity) return false;
-    memcpy(data + used, line, n); used += n;
+    out.Text("\r\n; ");
+    out.Text(*name ? name : "USB Audio Device");
+    out.Text("\r\n[");
+    out.Hex4(e.key >> 16);
+    out.Text(":");
+    out.Hex4(e.key & 65535);
+    out.Text("]\r\nvolume=");
+    out.UInt(Get(e.levels, Volume));
+    out.Text("\r\nmicrophone_gain=");
+    out.UInt(Get(e.levels, MicGain));
+    out.Text("\r\noutput_muted=");
+    out.UInt(Get(e.levels, OutputMute));
+    out.Text("\r\nmicrophone_muted=");
+    out.UInt(Get(e.levels, MicMute));
+    out.Text("\r\noutput_mono=");
+    out.UInt(Get(e.levels, OutputMono));
+    out.Text("\r\n");
   }
-  data[used] = 0; *size = used; return true;
+  if (!out.ok) return false;
+  *size = (size_t)(out.p - data);
+  *out.p = 0;
+  return true;
 }
 }
