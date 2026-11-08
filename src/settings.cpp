@@ -237,18 +237,23 @@ DWORD WINAPI SettingsWorker(void*) {
     } else {
       ui_since = 0;
     }
-    // Keep every write out of the Guide's lifetime plus 10 s after it. The
-    // ten-minute escape hatch only fires if a panel lifetime was ever leaked,
-    // so a leak cannot silently disable persistence forever.
-    const bool forced = ui_active && ui_since && now - ui_since >= 600000u;
-    if (now - ui_quiet < 10000u || (ui_active && !forced)) {
+    // Keep every write out of the Guide's lifetime plus a full quiet minute:
+    // a save can take 35 s or more, so the next Guide open must not land in
+    // the middle of one. A pending change older than five minutes is written
+    // anyway (whenever the Guide is closed) so it cannot be postponed forever.
+    const bool ui_force = ui_active && ui_since && now - ui_since >= 600000u;
+    const bool stale = now - changed >= 300000u;
+    if ((ui_active && !ui_force) ||
+        (!ui_active && !stale && now - ui_quiet < 60000u)) {
       if (!defer_logged && SaveDue(now, changed, attempted, retry)) {
         DiagnosticsStorage("settings-defer", (DWORD)generation, (DWORD)saved);
         defer_logged = true;
       }
       continue;
     }
-    if (forced) DiagnosticsStorage("settings-forced", (DWORD)ui_since, now);
+    if (ui_force) DiagnosticsStorage("settings-forced", (DWORD)ui_since, now);
+    else if (stale && !ui_active)
+      DiagnosticsStorage("settings-stale", (DWORD)(now - changed), 0);
     if (!SaveDue(now, changed, attempted, retry)) continue;
     defer_logged = false;
     EnterCriticalSection(&g_lock);

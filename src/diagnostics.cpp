@@ -505,6 +505,8 @@ void DiagnosticsTick() {
   if (dropped)
     out.Append("tick=%lu event=queue-overflow dropped=%ld\n",
                GetTickCount(), dropped);
+  unsigned consumed[kEventSlots];
+  unsigned consumed_count = 0;
   for (unsigned index = 0; index < kEventSlots; ++index) {
     Slot& slot = g_slots[index];
     if (InterlockedCompareExchange(&slot.state, -2, 1) != 1) continue;
@@ -517,14 +519,23 @@ void DiagnosticsTick() {
       out.overflow = false;
       break;
     }
-    InterlockedExchange(&slot.state, 0);
+    consumed[consumed_count++] = index;
   }
   DWORD written = 0;
   bool wrote = true;
   if (out.length) {
     SetFilePointer(file, 0, 0, FILE_END);
     wrote = WriteFile(file, g_write_buffer, (DWORD)out.length, &written, 0) != FALSE;
-    if (!wrote) CloseLog();  // Reopen on the next tick instead of wedging.
+  }
+  if (wrote) {
+    for (unsigned i = 0; i < consumed_count; ++i)
+      InterlockedExchange(&g_slots[consumed[i]].state, 0);
+  } else {
+    // The batch stays queued and is retried; a failed write must not silently
+    // delete the evidence we are collecting.
+    for (unsigned i = 0; i < consumed_count; ++i)
+      InterlockedExchange(&g_slots[consumed[i]].state, 1);
+    CloseLog();
   }
   // While the Guide owns the screen the handle stays open: no create/close
   // traffic in the exact window a scene transition needs the volume. Outside
