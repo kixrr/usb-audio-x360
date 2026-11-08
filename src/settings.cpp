@@ -53,9 +53,11 @@ static bool Load(bool* writable) {
   if (primary == 1) { *writable = true; return true; }
   int backup = Read(g_backup, &g_snapshot);
   if (backup == 1) {
-    // Use a valid backup, but don't rotate an unreadable/corrupt primary over
-    // it. Only a missing primary can be safely replaced without inspection.
-    *writable = primary == 0;
+    // Use the valid backup and allow the primary to be replaced. With in-place
+    // writes an interrupted save can leave an unreadable primary; refusing to
+    // overwrite it would silently disable persistence for the whole session.
+    // The data written back is the valid backup plus live changes.
+    *writable = true;
     return true;
   }
   if (primary == 0 && backup == 0) {
