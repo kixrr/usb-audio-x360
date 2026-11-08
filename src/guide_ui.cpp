@@ -1249,6 +1249,7 @@ HRESULT APIENTRY SceneCreateHook(LPCWSTR base, LPCWSTR path, void* data, HXUIOBJ
     if (IsGuideMainScene(path) && g_xui.id(*scene, &id) >= 0 && id &&
         wcscmp(id, L"HUDScene") == 0) {
       g_guide_main_scene = *scene;
+      DiagnosticsUi("guide-scene", (DWORD)*scene, 0);
       // All object work is on the Guide thread; the audio worker never touches XUI.
       HXUIOBJ media = Find(*scene, L"Tab3");
       if (media) InjectMedia(media);

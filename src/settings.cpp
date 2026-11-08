@@ -15,10 +15,13 @@ static volatile LONG g_ready = 0, g_active = -1, g_generation = 0;
 // Remember it instead of dropping it, and select it once the table is loaded.
 static volatile LONG g_pending_key = 0, g_pending_device = 0;
 static volatile LONG g_fallback = kDefault;
-static char g_path[MAX_PATH], g_backup[MAX_PATH], g_temp[MAX_PATH];
+static char g_path[MAX_PATH], g_backup[MAX_PATH];
 // Large buffers belong to this worker, not its stack or the audio thread.
 static Table g_snapshot;
 static char g_bytes[32769];
+// The .bak is refreshed once per boot; after that the primary is rewritten in
+// place.
+static bool g_backup_written = false;
 
 static volatile LONG* Levels(LONG index) {
   return index >= 0 && index < (LONG)kCapacity
@@ -70,27 +73,49 @@ static bool MergeLoaded() {
   LeaveCriticalSection(&g_lock);
   return true;
 }
+// Copy the current file to .bak once per boot. After that the primary is
+// rewritten in place, which avoids the delete + two renames that made every
+// save a burst of FATX directory operations.
+static void WriteBackupOnce() {
+  if (g_backup_written) return;
+  g_backup_written = true;
+  DWORD started = GetTickCount();
+  BOOL ok = CopyFileA(g_path, g_backup, FALSE);
+  DiagnosticsStorage("save-backup", GetTickCount() - started, ok ? 0 : 1);
+}
 static bool Save() {
   size_t size = 0;
   if (!Format(g_snapshot, g_bytes, sizeof(g_bytes), &size)) return false;
-  HANDLE f = CreateFileA(g_temp, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
-  if (f == INVALID_HANDLE_VALUE) return false;
+  WriteBackupOnce();
+  DWORD started = GetTickCount();
+  HANDLE f = CreateFileA(g_path, GENERIC_WRITE, 0, 0, OPEN_ALWAYS,
+                         FILE_ATTRIBUTE_NORMAL, 0);
+  DWORD open_ms = GetTickCount() - started;
+  if (f == INVALID_HANDLE_VALUE) {
+    DiagnosticsStorage("save-open", open_ms, GetLastError());
+    return false;
+  }
+  started = GetTickCount();
+  SetFilePointer(f, 0, 0, FILE_BEGIN);
   DWORD written = 0;
-  bool ok = WriteFile(f, g_bytes, (DWORD)size, &written, 0) && written == size;
+  bool ok = WriteFile(f, g_bytes, (DWORD)size, &written, 0) != FALSE &&
+            written == size;
+  DWORD write_ms = GetTickCount() - started;
+  DWORD truncate_ms = 0;
+  if (ok) {
+    started = GetTickCount();
+    ok = SetEndOfFile(f) != FALSE;
+    truncate_ms = GetTickCount() - started;
+  }
+  started = GetTickCount();
   // No FlushFileBuffers here. On this console a flush can park for minutes on
   // the FATX device while the Guide needs the same device to load its next
-  // scene. CloseHandle is enough; the data is committed by the cache.
+  // scene. Closing the handle is enough; the cache commits it.
   CloseHandle(f);
+  DiagnosticsStorage("save-io", open_ms, write_ms);
+  DiagnosticsStorage("save-close", GetTickCount() - started, truncate_ms);
   if (!ok) return false;
-  DWORD attrs = GetFileAttributesA(g_path);
-  if (attrs != (DWORD)-1) {
-    if (!DeleteFileA(g_backup) && GetLastError() != ERROR_FILE_NOT_FOUND) return false;
-    if (!MoveFileA(g_path, g_backup)) return false;
-  } else if (GetLastError() != ERROR_FILE_NOT_FOUND) return false;
-  if (MoveFileA(g_temp, g_path)) return true;
-  // If replacement fails, retain or restore the previous complete file.
-  MoveFileA(g_backup, g_path);
-  return false;
+  return true;
 }
 static void UpdateName() {
   AudioDeviceInfo info;
@@ -124,7 +149,6 @@ VOID SettingsInitialize() {
   // Reuse the resolved module-directory alias, never a title-relative path.
   if (DiagnosticsSettingsPath(g_path, sizeof(g_path))) {
     sprintf(g_backup, "%s.bak", g_path);
-    sprintf(g_temp, "%s.tmp", g_path);
   }
 }
 LONG SettingsGet(audio_settings::Field field) {
@@ -221,7 +245,7 @@ DWORD WINAPI SettingsWorker(void*) {
     if (!writable || generation == saved) { defer_logged = false; continue; }
     bool ui_active = StorageIsUiActive();
     if (ui_active) ui_quiet = now;
-    if (ui_active || now - ui_quiet < 3000u) {
+    if (ui_active || now - ui_quiet < 10000u) {
       if (!defer_logged && SaveDue(now, changed, attempted, retry)) {
         DiagnosticsStorage("settings-defer", (DWORD)generation, (DWORD)saved);
         defer_logged = true;
@@ -241,12 +265,18 @@ DWORD WINAPI SettingsWorker(void*) {
     LeaveCriticalSection(&g_lock);
     DWORD save_started = GetTickCount();
     StorageLock();
+    DWORD lock_ms = GetTickCount() - save_started;
     bool ok = Save();
     StorageUnlock();
     DWORD elapsed = GetTickCount() - save_started;
+    DiagnosticsStorage("settings-lock", lock_ms, elapsed);
     DiagnosticsStorage("settings-save", elapsed, ok ? 1 : 0);
     attempted = GetTickCount();
-    retry = ok ? 10000 : 30000;
+    // Back off after a slow write: the FATX device can park for tens of
+    // seconds, and repeating the attempt immediately only multiplies the
+    // windows in which the Guide can stall loading a scene.
+    retry = !ok ? 30000 : (elapsed >= 30000u ? 300000u :
+                           (elapsed >= 5000u ? 60000u : 10000u));
     if (ok) saved = snapshot_generation;
   }
 }
