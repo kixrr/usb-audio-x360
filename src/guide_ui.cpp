@@ -331,7 +331,7 @@ HRESULT APIENTRY DestroySettings(void* instance) {
     SettingsScene* state = (SettingsScene*)instance;
     // Safety net: XM_DESTROY normally balances this, but a failed init can be
     // torn down without it. Leaking the depth would disable every settings save.
-    if (state->ui_entered) { StorageUiLeave(); state->ui_entered = false; }
+    if (state->ui_entered) { StoragePanelLeave(); state->ui_entered = false; }
     free(instance);
   }
   return S_OK;
@@ -340,7 +340,7 @@ HRESULT APIENTRY DestroySettings(void* instance) {
 HRESULT APIENTRY DestroyVolume(void* instance) {
   if (instance) {
     VolumeScene* state = (VolumeScene*)instance;
-    if (state->ui_entered) { StorageUiLeave(); state->ui_entered = false; }
+    if (state->ui_entered) { StorageGuideLeave(); state->ui_entered = false; }
     free(instance);
   }
   return S_OK;
@@ -584,7 +584,7 @@ HRESULT APIENTRY SettingsObjectProc(HXUIOBJ object, XUIMessage* message,
     if (state->properties) {
       if (!state->back_button || !state->device_info) return E_FAIL;
       RefreshDeviceInfo(state);
-      if (!state->ui_entered) { StorageUiEnter(); state->ui_entered = true; }
+      if (!state->ui_entered) { StoragePanelEnter(); state->ui_entered = true; }
       return ArmSettingsTimer(object, state);
     }
     state->test_button = Find(object, L"MicrophoneTestButton");
@@ -604,7 +604,7 @@ HRESULT APIENTRY SettingsObjectProc(HXUIOBJ object, XUIMessage* message,
     state->gain = state->volume = -1;
     state->meter_db = -60;
     RefreshSettings(state);
-    if (!state->ui_entered) { StorageUiEnter(); state->ui_entered = true; }
+    if (!state->ui_entered) { StoragePanelEnter(); state->ui_entered = true; }
     return ArmSettingsTimer(object, state);
   } else if (message->dwMessage == XM_TIMER && message->pvData &&
       message->cbData >= sizeof(XUIMessageTimer) &&
@@ -674,7 +674,7 @@ HRESULT APIENTRY SettingsObjectProc(HXUIOBJ object, XUIMessage* message,
     state->destroyed = true;
     state->active = false;
     state->back_pending = state->properties_pending = false;
-    if (state->ui_entered) { StorageUiLeave(); state->ui_entered = false; }
+    if (state->ui_entered) { StoragePanelLeave(); state->ui_entered = false; }
     DisarmSettingsTimer(object, state);
     g_xui.kill_timer(object, kSettingsRefreshTimer);
     AudioStopMicrophoneTest();
@@ -743,7 +743,7 @@ HRESULT APIENTRY VolumeObjectProc(HXUIOBJ object, XUIMessage* message, void* ins
     state->dismiss_button = Find(object, L"VolumeDismissButton");
     state->title = Find(object, L"UsbAudioLabel");
     Synchronize(state);
-    if (!state->ui_entered) { StorageUiEnter(); state->ui_entered = true; }
+    if (!state->ui_entered) { StorageGuideEnter(); state->ui_entered = true; }
     DiagnosticsUi("volume-init", (DWORD)object, 0);
   } else if (message->dwMessage == XM_TIMER && message->pvData &&
       message->cbData >= sizeof(XUIMessageTimer) &&
@@ -757,7 +757,7 @@ HRESULT APIENTRY VolumeObjectProc(HXUIOBJ object, XUIMessage* message, void* ins
     if (state->visible) Synchronize(state);
   } else if (message->dwMessage == XM_DESTROY) {
     g_xui.kill_timer(object, kVolumeRefreshTimer);
-    if (state->ui_entered) { StorageUiLeave(); state->ui_entered = false; }
+    if (state->ui_entered) { StorageGuideLeave(); state->ui_entered = false; }
     DiagnosticsUi("volume-destroy", (DWORD)object, 0);
   } else if (message->dwMessage == XM_NOTIFY && message->pvData &&
              message->cbData >= sizeof(XUINotify)) {

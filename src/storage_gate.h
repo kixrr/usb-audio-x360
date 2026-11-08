@@ -11,9 +11,19 @@ bool StorageTryLock();
 void StorageLock();
 void StorageUnlock();
 
-// The Guide owns the same storage device while it is navigating. Track how
-// many plugin-created panels are alive so the settings worker can keep its
-// writes out of that window (and out of the transition that follows it).
-void StorageUiEnter();
-void StorageUiLeave();
+// Two different lifetimes drive the save gate:
+//  - the Guide volume panel, which is rebuilt with GuideMain.xur on every
+//    Guide open, brackets the Guide itself;
+//  - the settings panels (settings and properties pages), which are open only
+//    while the user is editing.
+// The settings worker refuses to write while a settings panel is alive, and
+// waits a few seconds after the last change of either lifetime.
+void StorageGuideEnter();
+void StorageGuideLeave();
+bool StorageIsGuideOpen();
+void StoragePanelEnter();
+void StoragePanelLeave();
+bool StorageIsPanelOpen();
+// True while either lifetime is alive; used to keep the diagnostics log handle
+// open across a Guide session.
 bool StorageIsUiActive();

@@ -209,11 +209,14 @@ DWORD WINAPI SettingsWorker(void*) {
   DWORD changed = GetTickCount(), attempted = changed - 10000u;
   DWORD retry = 10000;
   DWORD last_load = changed;
-  // Keep writes out of the Guide's scene-transition window. The timer is
-  // restarted whenever a panel is alive, so a change made in the settings page
-  // is written a few seconds after the page is gone.
+  // The settings page must be closed before anything is written. Once it is,
+  // a short quiet period is enough: the user is normally still sitting in the
+  // Guide, which is exactly the safe moment, and by the time the Guide is
+  // closed the value is already on disk. A Guide open/close also restarts the
+  // timer so a fresh GuideMain.xur load never coincides with a write.
   DWORD ui_quiet = GetTickCount();
-  DWORD ui_since = 0;
+  LONG guide_seen = StorageIsGuideOpen() ? 1 : 0;
+  DWORD panel_since = 0;
   bool defer_logged = false;
   for (;;) {
     Sleep(500);
@@ -230,30 +233,26 @@ DWORD WINAPI SettingsWorker(void*) {
     DWORD now = GetTickCount();
     if (generation != observed) { observed = generation; changed = now; }
     if (!writable || generation == saved) { defer_logged = false; continue; }
-    bool ui_active = StorageIsUiActive();
-    if (ui_active) {
-      if (!ui_since) ui_since = now;
+    const LONG guide_now = StorageIsGuideOpen() ? 1 : 0;
+    if (guide_now != guide_seen) { guide_seen = guide_now; ui_quiet = now; }
+    const bool panel = StorageIsPanelOpen();
+    if (panel) {
+      if (!panel_since) panel_since = now;
       ui_quiet = now;
     } else {
-      ui_since = 0;
+      panel_since = 0;
     }
-    // Keep every write out of the Guide's lifetime plus a full quiet minute:
-    // a save can take 35 s or more, so the next Guide open must not land in
-    // the middle of one. A pending change older than five minutes is written
-    // anyway (whenever the Guide is closed) so it cannot be postponed forever.
-    const bool ui_force = ui_active && ui_since && now - ui_since >= 600000u;
-    const bool stale = now - changed >= 300000u;
-    if ((ui_active && !ui_force) ||
-        (!ui_active && !stale && now - ui_quiet < 60000u)) {
+    // A settings panel should never live this long; if one leaks, do not let
+    // persistence stop forever.
+    const bool panel_stuck = panel && panel_since && now - panel_since >= 600000u;
+    if (!panel_stuck && now - ui_quiet < 3000u) {
       if (!defer_logged && SaveDue(now, changed, attempted, retry)) {
         DiagnosticsStorage("settings-defer", (DWORD)generation, (DWORD)saved);
         defer_logged = true;
       }
       continue;
     }
-    if (ui_force) DiagnosticsStorage("settings-forced", (DWORD)ui_since, now);
-    else if (stale && !ui_active)
-      DiagnosticsStorage("settings-stale", (DWORD)(now - changed), 0);
+    if (panel_stuck) DiagnosticsStorage("settings-forced", panel_since, now);
     if (!SaveDue(now, changed, attempted, retry)) continue;
     defer_logged = false;
     EnterCriticalSection(&g_lock);

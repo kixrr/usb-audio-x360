@@ -5,7 +5,8 @@ namespace {
 
 CRITICAL_SECTION g_io_lock;
 volatile LONG g_initialized = 0;
-volatile LONG g_ui_depth = 0;
+volatile LONG g_guide_depth = 0;
+volatile LONG g_panel_depth = 0;
 
 }  // namespace
 
@@ -29,13 +30,26 @@ void StorageUnlock() {
     LeaveCriticalSection(&g_io_lock);
 }
 
-void StorageUiEnter() { InterlockedIncrement(&g_ui_depth); }
+void StorageGuideEnter() { InterlockedIncrement(&g_guide_depth); }
 
-void StorageUiLeave() {
-  if (InterlockedCompareExchange(&g_ui_depth, 0, 0) > 0)
-    InterlockedDecrement(&g_ui_depth);
+void StorageGuideLeave() {
+  if (InterlockedCompareExchange(&g_guide_depth, 0, 0) > 0)
+    InterlockedDecrement(&g_guide_depth);
 }
 
-bool StorageIsUiActive() {
-  return InterlockedCompareExchange(&g_ui_depth, 0, 0) > 0;
+bool StorageIsGuideOpen() {
+  return InterlockedCompareExchange(&g_guide_depth, 0, 0) > 0;
 }
+
+void StoragePanelEnter() { InterlockedIncrement(&g_panel_depth); }
+
+void StoragePanelLeave() {
+  if (InterlockedCompareExchange(&g_panel_depth, 0, 0) > 0)
+    InterlockedDecrement(&g_panel_depth);
+}
+
+bool StorageIsPanelOpen() {
+  return InterlockedCompareExchange(&g_panel_depth, 0, 0) > 0;
+}
+
+bool StorageIsUiActive() { return StorageIsGuideOpen() || StorageIsPanelOpen(); }
