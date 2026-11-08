@@ -202,6 +202,9 @@ struct VolumeScene {
   bool layout_ready, visible;
   bool expanded;
   bool synchronizing;
+  // The volume panel is rebuilt with GuideMain.xur on every Guide open, so its
+  // lifetime is the Guide's lifetime. Saves stay out of that whole window.
+  bool ui_entered;
 };
 
 struct SettingsScene {
@@ -328,6 +331,15 @@ HRESULT APIENTRY DestroySettings(void* instance) {
     SettingsScene* state = (SettingsScene*)instance;
     // Safety net: XM_DESTROY normally balances this, but a failed init can be
     // torn down without it. Leaking the depth would disable every settings save.
+    if (state->ui_entered) { StorageUiLeave(); state->ui_entered = false; }
+    free(instance);
+  }
+  return S_OK;
+}
+
+HRESULT APIENTRY DestroyVolume(void* instance) {
+  if (instance) {
+    VolumeScene* state = (VolumeScene*)instance;
     if (state->ui_entered) { StorageUiLeave(); state->ui_entered = false; }
     free(instance);
   }
@@ -731,6 +743,8 @@ HRESULT APIENTRY VolumeObjectProc(HXUIOBJ object, XUIMessage* message, void* ins
     state->dismiss_button = Find(object, L"VolumeDismissButton");
     state->title = Find(object, L"UsbAudioLabel");
     Synchronize(state);
+    if (!state->ui_entered) { StorageUiEnter(); state->ui_entered = true; }
+    DiagnosticsUi("volume-init", (DWORD)object, 0);
   } else if (message->dwMessage == XM_TIMER && message->pvData &&
       message->cbData >= sizeof(XUIMessageTimer) &&
       ((XUIMessageTimer*)message->pvData)->nId == kVolumeRefreshTimer) {
@@ -743,6 +757,8 @@ HRESULT APIENTRY VolumeObjectProc(HXUIOBJ object, XUIMessage* message, void* ins
     if (state->visible) Synchronize(state);
   } else if (message->dwMessage == XM_DESTROY) {
     g_xui.kill_timer(object, kVolumeRefreshTimer);
+    if (state->ui_entered) { StorageUiLeave(); state->ui_entered = false; }
+    DiagnosticsUi("volume-destroy", (DWORD)object, 0);
   } else if (message->dwMessage == XM_NOTIFY && message->pvData &&
              message->cbData >= sizeof(XUINotify)) {
     XUINotify* notify = (XUINotify*)message->pvData;
@@ -789,7 +805,7 @@ bool RegisterVolumeClass() {
   g_volume_class.szClassName = L"UsbAudioVolumeScene";
   g_volume_class.szBaseClassName = XUI_CLASS_SCENE;
   g_volume_class.Methods.CreateInstance = CreateVolume;
-  g_volume_class.Methods.DestroyInstance = DestroyState;
+  g_volume_class.Methods.DestroyInstance = DestroyVolume;
   g_volume_class.Methods.ObjectProc = VolumeObjectProc;
   HRESULT result = g_xui.register_class(&g_volume_class, &g_volume_class_handle);
   return SUCCEEDED(result) && g_volume_class_handle;

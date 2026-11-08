@@ -19,9 +19,6 @@ static char g_path[MAX_PATH], g_backup[MAX_PATH];
 // Large buffers belong to this worker, not its stack or the audio thread.
 static Table g_snapshot;
 static char g_bytes[32769];
-// The .bak is refreshed once per boot; after that the primary is rewritten in
-// place.
-static bool g_backup_written = false;
 
 static volatile LONG* Levels(LONG index) {
   return index >= 0 && index < (LONG)kCapacity
@@ -73,20 +70,9 @@ static bool MergeLoaded() {
   LeaveCriticalSection(&g_lock);
   return true;
 }
-// Copy the current file to .bak once per boot. After that the primary is
-// rewritten in place, which avoids the delete + two renames that made every
-// save a burst of FATX directory operations.
-static void WriteBackupOnce() {
-  if (g_backup_written) return;
-  g_backup_written = true;
-  DWORD started = GetTickCount();
-  BOOL ok = CopyFileA(g_path, g_backup, FALSE);
-  DiagnosticsStorage("save-backup", GetTickCount() - started, ok ? 0 : 1);
-}
 static bool Save() {
   size_t size = 0;
   if (!Format(g_snapshot, g_bytes, sizeof(g_bytes), &size)) return false;
-  WriteBackupOnce();
   DWORD started = GetTickCount();
   HANDLE f = CreateFileA(g_path, GENERIC_WRITE, 0, 0, OPEN_ALWAYS,
                          FILE_ATTRIBUTE_NORMAL, 0);
@@ -227,6 +213,7 @@ DWORD WINAPI SettingsWorker(void*) {
   // restarted whenever a panel is alive, so a change made in the settings page
   // is written a few seconds after the page is gone.
   DWORD ui_quiet = GetTickCount();
+  DWORD ui_since = 0;
   bool defer_logged = false;
   for (;;) {
     Sleep(500);
@@ -244,14 +231,24 @@ DWORD WINAPI SettingsWorker(void*) {
     if (generation != observed) { observed = generation; changed = now; }
     if (!writable || generation == saved) { defer_logged = false; continue; }
     bool ui_active = StorageIsUiActive();
-    if (ui_active) ui_quiet = now;
-    if (ui_active || now - ui_quiet < 10000u) {
+    if (ui_active) {
+      if (!ui_since) ui_since = now;
+      ui_quiet = now;
+    } else {
+      ui_since = 0;
+    }
+    // Keep every write out of the Guide's lifetime plus 10 s after it. The
+    // ten-minute escape hatch only fires if a panel lifetime was ever leaked,
+    // so a leak cannot silently disable persistence forever.
+    const bool forced = ui_active && ui_since && now - ui_since >= 600000u;
+    if (now - ui_quiet < 10000u || (ui_active && !forced)) {
       if (!defer_logged && SaveDue(now, changed, attempted, retry)) {
         DiagnosticsStorage("settings-defer", (DWORD)generation, (DWORD)saved);
         defer_logged = true;
       }
       continue;
     }
+    if (forced) DiagnosticsStorage("settings-forced", (DWORD)ui_since, now);
     if (!SaveDue(now, changed, attempted, retry)) continue;
     defer_logged = false;
     EnterCriticalSection(&g_lock);
