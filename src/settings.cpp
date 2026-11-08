@@ -236,11 +236,11 @@ DWORD WINAPI SettingsWorker(void*) {
   DWORD changed = GetTickCount(), attempted = changed - 10000u;
   DWORD retry = 10000;
   DWORD last_load = changed;
-  // Write as soon as the settings page is gone: two seconds later the page
-  // transition has finished and the user is normally still sitting in the
-  // Guide, which is the safe state. GuideMain.xur creation is the one thing a
-  // write must never overlap, so opening or closing the Guide restarts this
-  // timer as well.
+  // Write as soon as the settings page is gone: the page transition has
+  // finished after half a second and the user is normally still in the Guide.
+  // GuideMain.xur creation is the one thing a write must never overlap, so
+  // opening the Guide restarts this short timer. `changed` still enforces a
+  // two-second debounce so rapid toggles collapse into one write.
   DWORD ui_quiet = GetTickCount();
   LONG guide_seen = StorageIsGuideOpen() ? 1 : 0;
   DWORD panel_since = 0;
@@ -264,7 +264,13 @@ DWORD WINAPI SettingsWorker(void*) {
     if (generation != observed) { observed = generation; changed = now; }
     if (!writable || generation == saved) { defer_logged = false; continue; }
     const LONG guide_now = StorageIsGuideOpen() ? 1 : 0;
-    if (guide_now != guide_seen) { guide_seen = guide_now; ui_quiet = now; }
+    if (guide_now != guide_seen) {
+      guide_seen = guide_now;
+      // Only a Guide *open* postpones the write: GuideMain.xur creation is the
+      // one scene load a write must not overlap. Guide close does not restart
+      // the timer, so leaving the Guide quickly still saves promptly.
+      if (guide_now) ui_quiet = now;
+    }
     const bool panel = StorageIsPanelOpen();
     if (panel) {
       if (!panel_since) panel_since = now;
@@ -275,7 +281,7 @@ DWORD WINAPI SettingsWorker(void*) {
     // A settings panel should never live this long; if one leaks, do not let
     // persistence stop forever.
     const bool panel_stuck = panel && panel_since && now - panel_since >= 600000u;
-    if (!panel_stuck && now - ui_quiet < 2000u) {
+    if (!panel_stuck && now - ui_quiet < 500u) {
       if (!defer_logged && SaveDue(now, changed, attempted, retry)) {
         DiagnosticsStorage("settings-defer", (DWORD)generation, (DWORD)saved);
         defer_logged = true;
